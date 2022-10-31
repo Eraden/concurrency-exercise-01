@@ -9,15 +9,6 @@ pub trait Solution {
 
 pub struct Solution0;
 
-impl Solution0 {
-    async fn download_one(
-        name: ServerName,
-        mut sender: futures::channel::mpsc::Sender<Option<Binary>>,
-    ) {
-        sender.send(download(name).await.ok()).await.ok();
-    }
-}
-
 #[async_trait]
 impl Solution for Solution0 {
     async fn solve(repositories: Vec<ServerName>) -> Option<Binary> {
@@ -26,20 +17,20 @@ impl Solution for Solution0 {
 
         let (sender, receiver) = futures::channel::mpsc::channel::<Option<Binary>>(len);
 
-        let download_all = futures::stream::iter(repositories.into_iter())
-            .for_each_concurrent(len, move |name| Self::download_one(name, sender.clone()));
+        for name in repositories {
+            let mut sender = sender.clone();
+            tokio::spawn(async move {
+                let res = download(name).await;
+                sender.send(res.ok()).await.ok();
+            });
+        }
 
-        let wait_loaded = async move {
-            let mut rx = receiver.take(len);
-            while let Some(res) = rx.next().await {
-                if res.is_some() {
-                    return res;
-                }
+        let mut rx = receiver.take(len);
+        while let Some(res) = rx.next().await {
+            if res.is_some() {
+                return res;
             }
-            None
-        };
-
-        let (res, _) = futures::join!(wait_loaded, download_all);
-        res
+        }
+        None
     }
 }
